@@ -12,7 +12,8 @@ REPOSITORY_BASE_URL = "https://sparked.npd.telstrahealth.com/ereq/fhir"
 EMR_BASE_URL = "http://localhost:8080/fhir"
 
 
-def identifier(id):
+def identifier(order_id):
+    value = "BEDA9999-%06d" % (order_id)
     return {
         "type": {
             "coding": [
@@ -24,23 +25,65 @@ def identifier(id):
             "text": "Placer Group Number",
         },
         "system": "https://emr.beda.software/ServiceReqeust",
-        "value": id,
+        "value": value,
     }
 
 
-async def prepare_service_request(sr):
+def contained(patient_id):
+    return [
+        {
+            "resourceType": "Coverage",
+            "id": "coverage",
+            "status": "active",
+            "type": {
+                "coding": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+                        "code": "PUBLICPOL",
+                        "display": "public healthcare",
+                    }
+                ],
+                "text": "Bulk Billed",
+            },
+            "beneficiary": {
+                "reference": f"Patient/{patient_id}",
+            },
+            "payor": [{"type": "Organization", "display": "Medicare Australia"}],
+        },
+        {
+            "resourceType": "Encounter",
+            "id": "encounter",
+            "status": "finished",
+            "class": {
+                "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+                "code": "AMB",
+                "display": "ambulatory",
+            },
+        },
+    ]
+
+
+async def prepare_service_request(sr, order_number):
     patient = await sr["subject"].to_resource()
     patient_data = patient.serialize()
     del patient_data["meta"]
 
+    encounter = await sr["encounter"].to_resource()
+    encounter_data = encounter.serialize()
+    del encounter_data["meta"]
+    del encounter_data["participant"]
+
     sr_id = uuid4()
     task_id = uuid4()
+    patient_id = patient_data["id"]
+    encounter_id = encounter_data["id"]
+
     external_sr = {
         "resourceType": "ServiceRequest",
-        "requisition": identifier(sr["id"]),
+        "requisition": identifier(order_number),
         "id": str(sr_id),
-        "contained": [patient_data],
-        "authoredOn": "2024-03-21",
+        "contained": contained(patient_id),
+        "authoredOn": "2024-03-21T10:00:00+10:00",
         "category": [
             {
                 "coding": [
@@ -57,15 +100,29 @@ async def prepare_service_request(sr):
         "requester": {"reference": f"PractitionerRole/{practitioner_role}"},
         "status": "active",
         "intent": sr["intent"],
-        "subject": {"reference": f"#{patient['id']}"},
+        "subject": sr["subject"],
+        "encounter": {"reference": "#encounter"},
+        "insurance": [{"reference": "#coverage"}],
     }
     external_task = {
         "resourceType": "Task",
-        "groupIdentifier": identifier(sr["id"]),
+        "groupIdentifier": identifier(order_number),
         "status": "requested",
+        "priority": sr["priority"],
+        "code": {
+            "coding": [
+                {
+                    "system": "http://hl7.org/fhir/CodeSystem/task-code",
+                    "code": "fulfill",
+                }
+            ]
+        },
         "intent": "order",
         "focus": {"reference": f"ServiceRequest/{str(sr_id)}"},
         "owner": sr["performer"][0],
+        "authoredOn": "2024-03-21T10:00:00+10:00",
+        "for": {"reference": f"Patient/{patient_data['id']}"},
+        "requester": {"reference": f"PractitionerRole/{practitioner_role}"},
     }
     return {
         "resourceType": "Bundle",
@@ -80,6 +137,16 @@ async def prepare_service_request(sr):
                 "request": {"url": "Task", "method": "POST"},
                 "resource": external_task,
                 "fullUrl": f"Task/{str(task_id)}",
+            },
+            {
+                "request": {"url": "Patient", "method": "POST"},
+                "resource": patient_data,
+                "fullUrl": f"Patient/{str(patient_id)}",
+            },
+            {
+                "request": {"url": "Encounter", "method": "POST"},
+                "resource": encounter_data,
+                "fullUrl": f"Encounter/{str(encounter_id)}",
             },
         ],
     }
@@ -97,7 +164,10 @@ async def syncronize(request):
     for i in sr.get("identifier", []):
         if i["system"] == system:
             raise Exception("Already synchronized")
-    bundle = repository.resource("Bundle", **(await prepare_service_request(sr)))
+    order_number = await emr.resources("ServiceRequest").count()
+    bundle = repository.resource(
+        "Bundle", **(await prepare_service_request(sr, order_number))
+    )
     await bundle.save()
     external_sr_id = bundle["entry"][0]["response"]["location"].split("/")[1]
     sr["identifier"] = [{"system": system, "value": external_sr_id}]
