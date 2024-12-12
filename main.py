@@ -14,7 +14,7 @@ EMR_BASE_URL = "http://localhost:8080/fhir"
 
 
 def identifier(order_id):
-    value = "BEDA9999-%06d" % (order_id)
+    value = "BEDA1212-%06d" % (order_id)
     return {
         "type": {
             "coding": [
@@ -82,6 +82,7 @@ async def prepare_service_request(sr, order_number):
     encounter_data['subject'] = {"reference": f"urn:uuid:{patient_id}"}
 
     sr_id = uuid4()
+    group_task_id = uuid4()
     task_id = uuid4()
     encounter_id = encounter_data["id"]
 
@@ -90,7 +91,7 @@ async def prepare_service_request(sr, order_number):
         "requisition": identifier(order_number),
         "id": str(sr_id),
         "contained": contained(patient_id),
-        "authoredOn": "2024-08-22T10:00:00+10:00",
+        "authoredOn": "2024-12-12T10:00:00+10:00",
         "category": [
             {
                 "coding": [
@@ -104,17 +105,36 @@ async def prepare_service_request(sr, order_number):
         ],
         "code": sr["code"],
         "priority": sr["priority"],
-        "requester": {"reference": f"PractitionerRole/{practitioner_role}"},
+        "requester": {"reference": "http://pyroserver.azurewebsites.net/pyro/PractitionerRole/00040000-ac10-0242-ebbf-08dd1a46f4d5"},
         "status": "active",
         "intent": sr["intent"],
         "subject": {"reference": f"urn:uuid:{patient_id}"},
         "encounter": {"reference": "#encounter"},
         "insurance": [{"reference": "#coverage"}],
     }
-    external_task = {
+    external_group_task = {
         "resourceType": "Task",
+        "meta": {
+            "profile": [
+                "http://hl7.org.au/fhir/ereq/StructureDefinition/au-erequesting-task"
+            ],
+            "tag": [
+                {
+                    "system": "http://fhir.geniesolutions.io/CodeSystem/eorders-tag",
+                    "code": "fulfillment-task-group"
+                }
+            ]
+        },
         "groupIdentifier": identifier(order_number),
         "status": "requested",
+        "businessStatus": {
+            "coding": [
+                {
+                    "system": "http://sonichealthcare.com.au/CodeSystem/pathology-order-status",
+                    "code": "active"
+                }
+            ]
+        },
         "priority": sr["priority"],
         "code": {
             "coding": [
@@ -127,10 +147,58 @@ async def prepare_service_request(sr, order_number):
         "intent": "order",
         "focus": {"reference": f"urn:uuid:{str(sr_id)}"},
         # "owner": sr["performer"][0],
+        "owner": {
+            "reference": "http://pyroserver.azurewebsites.net/pyro/Organization/00040000-ac10-0242-bfe0-08dd1a32990a",
+        },
         "authoredOn": "2024-03-21T10:00:00+10:00",
         "for": {"reference": f"urn:uuid:{patient_data['id']}"},
-        "requester": {"reference": f"PractitionerRole/{practitioner_role}"},
+        "requester": {"reference": "http://pyroserver.azurewebsites.net/pyro/PractitionerRole/00040000-ac10-0242-ebbf-08dd1a46f4d5"},
     }
+
+
+    external_task = {
+        "resourceType": "Task",
+        "meta": {
+            "profile": [
+                "http://hl7.org.au/fhir/ereq/StructureDefinition/au-erequesting-task"
+            ],
+            "tag": [
+                {
+                    "system": "http://fhir.geniesolutions.io/CodeSystem/eorders-tag",
+                    "code": "fulfillment-task"
+                }
+            ]
+        },
+        "groupIdentifier": identifier(order_number),
+        "status": "requested",
+        "businessStatus": {
+            "coding": [
+                {
+                    "system": "http://sonichealthcare.com.au/CodeSystem/pathology-order-status",
+                    "code": "active"
+                }
+            ]
+        },
+        "priority": sr["priority"],
+        "code": {
+            "coding": [
+                {
+                    "system": "http://hl7.org/fhir/CodeSystem/task-code",
+                    "code": "fulfill",
+                }
+            ]
+        },
+        "intent": "order",
+        "focus": {"reference": f"urn:uuid:{str(sr_id)}"},
+        # "owner": sr["performer"][0],
+        "owner": {
+            "reference": "http://pyroserver.azurewebsites.net/pyro/Organization/00040000-ac10-0242-bfe0-08dd1a32990a",
+        },
+        "authoredOn": "2024-03-21T10:00:00+10:00",
+        "for": {"reference": f"urn:uuid:{patient_data['id']}"},
+        "requester": {"reference": "http://pyroserver.azurewebsites.net/pyro/PractitionerRole/00040000-ac10-0242-ebbf-08dd1a46f4d5"},
+    }
+
     return {
         "resourceType": "Bundle",
         "type": "transaction",
@@ -144,6 +212,11 @@ async def prepare_service_request(sr, order_number):
                 "request": {"url": "Patient", "method": "POST"},
                 "resource": patient_data,
                 "fullUrl": f"urn:uuid:{str(patient_id)}",
+            },
+            {
+                "request": {"url": "Task", "method": "POST"},
+                "resource": external_group_task,
+                "fullUrl": f"urn:uuid:{str(group_task_id)}",
             },
             {
                 "request": {"url": "Task", "method": "POST"},
@@ -176,8 +249,15 @@ async def syncronize(request):
         "Bundle", **(await prepare_service_request(sr, order_number))
     )
     await bundle.save()
+
     print(bundle.serialize())
-    external_sr_id = bundle["entry"][0]["response"]["location"].split("/")[1]
+
+    location = bundle["entry"][0]["response"]["location"]
+    if "pyroserver.azurewebsites.net" in location:
+        external_sr_id = location.split("/")[5]
+    else:
+        external_sr_id = location.split("/")[1]
+
     sr["identifier"] = [{"system": system, "value": external_sr_id}]
     await sr.save(fields=["identifier"])
 
