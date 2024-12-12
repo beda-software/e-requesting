@@ -5,10 +5,10 @@ import aiohttp
 from aiohttp import web
 from fhirpy import AsyncFHIRClient
 
-practitioner_role = "bennett-amanda"
+practitioner_role = "acupuncturist-macnab-adam"
 import logging
 
-REPOSITORY_BASE_URL = "https://sparked.npd.telstrahealth.com/ereq/fhir"
+REPOSITORY_BASE_URL = "https://fhir.hl7.org.au/ereq/fhir/DEFAULT"
 EMR_BASE_URL = "http://localhost:8080/fhir"
 
 
@@ -46,7 +46,7 @@ def contained(patient_id):
                 "text": "Bulk Billed",
             },
             "beneficiary": {
-                "reference": f"Patient/{patient_id}",
+                "reference": f"urn:uuid:{patient_id}",
             },
             "payor": [{"type": "Organization", "display": "Medicare Australia"}],
         },
@@ -67,15 +67,21 @@ async def prepare_service_request(sr, order_number):
     patient = await sr["subject"].to_resource()
     patient_data = patient.serialize()
     del patient_data["meta"]
+    patient_id = patient_data["id"]
 
     encounter = await sr["encounter"].to_resource()
     encounter_data = encounter.serialize()
     del encounter_data["meta"]
     del encounter_data["participant"]
+    del encounter_data["class"]
+    encounter_data["class"] = {
+        "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+        "code": "AMB",
+    }
+    encounter_data['subject'] = {"reference": f"urn:uuid:{patient_id}"}
 
     sr_id = uuid4()
     task_id = uuid4()
-    patient_id = patient_data["id"]
     encounter_id = encounter_data["id"]
 
     external_sr = {
@@ -83,7 +89,7 @@ async def prepare_service_request(sr, order_number):
         "requisition": identifier(order_number),
         "id": str(sr_id),
         "contained": contained(patient_id),
-        "authoredOn": "2024-03-21T10:00:00+10:00",
+        "authoredOn": "2024-08-22T10:00:00+10:00",
         "category": [
             {
                 "coding": [
@@ -100,7 +106,7 @@ async def prepare_service_request(sr, order_number):
         "requester": {"reference": f"PractitionerRole/{practitioner_role}"},
         "status": "active",
         "intent": sr["intent"],
-        "subject": sr["subject"],
+        "subject": {"reference": f"urn:uuid:{patient_id}"},
         "encounter": {"reference": "#encounter"},
         "insurance": [{"reference": "#coverage"}],
     }
@@ -118,10 +124,10 @@ async def prepare_service_request(sr, order_number):
             ]
         },
         "intent": "order",
-        "focus": {"reference": f"ServiceRequest/{str(sr_id)}"},
-        "owner": sr["performer"][0],
+        "focus": {"reference": f"urn:uuid:{str(sr_id)}"},
+        # "owner": sr["performer"][0],
         "authoredOn": "2024-03-21T10:00:00+10:00",
-        "for": {"reference": f"Patient/{patient_data['id']}"},
+        "for": {"reference": f"urn:uuid:{patient_data['id']}"},
         "requester": {"reference": f"PractitionerRole/{practitioner_role}"},
     }
     return {
@@ -131,22 +137,22 @@ async def prepare_service_request(sr, order_number):
             {
                 "request": {"url": "ServiceRequest", "method": "POST"},
                 "resource": external_sr,
-                "fullUrl": f"ServiceRequest/{str(sr_id)}",
-            },
-            {
-                "request": {"url": "Task", "method": "POST"},
-                "resource": external_task,
-                "fullUrl": f"Task/{str(task_id)}",
+                "fullUrl": f"urn:uuid:{str(sr_id)}",
             },
             {
                 "request": {"url": "Patient", "method": "POST"},
                 "resource": patient_data,
-                "fullUrl": f"Patient/{str(patient_id)}",
+                "fullUrl": f"urn:uuid:{str(patient_id)}",
             },
             {
+                "request": {"url": "Task", "method": "POST"},
+                "resource": external_task,
+                "fullUrl": f"urn:uuid:{str(task_id)}",
+            },
+           {
                 "request": {"url": "Encounter", "method": "POST"},
                 "resource": encounter_data,
-                "fullUrl": f"Encounter/{str(encounter_id)}",
+                "fullUrl": f"urn:uuid:{str(encounter_id)}",
             },
         ],
     }
@@ -169,11 +175,11 @@ async def syncronize(request):
         "Bundle", **(await prepare_service_request(sr, order_number))
     )
     await bundle.save()
+    print(bundle.serialize())
     external_sr_id = bundle["entry"][0]["response"]["location"].split("/")[1]
     sr["identifier"] = [{"system": system, "value": external_sr_id}]
     await sr.save(fields=["identifier"])
 
-    print(data)
     return web.Response()
 
 
@@ -193,7 +199,7 @@ async def attach(app: aiohttp.web_app.Application) -> AsyncGenerator:
     await sub.save()
     app["emr"] = emr
     app["repository"] = AsyncFHIRClient(
-        REPOSITORY_BASE_URL, authorization="Basic ZmlsbGVyOlFmYk51Z1czMnRaWDhuTA=="
+        REPOSITORY_BASE_URL, authorization="Basic cGxhY2VyOnBzOHFzN2tMVmJqUzVHcg=="
     )
     yield
     await sub.delete()
