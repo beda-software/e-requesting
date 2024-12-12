@@ -8,7 +8,8 @@ from fhirpy import AsyncFHIRClient
 practitioner_role = "acupuncturist-macnab-adam"
 import logging
 
-REPOSITORY_BASE_URL = "https://fhir.hl7.org.au/ereq/fhir/DEFAULT"
+# REPOSITORY_BASE_URL = "https://fhir.hl7.org.au/ereq/fhir/DEFAULT"
+REPOSITORY_BASE_URL = "https://pyroserver.azurewebsites.net/pyro"
 EMR_BASE_URL = "http://localhost:8080/fhir"
 
 
@@ -24,7 +25,7 @@ def identifier(order_id):
             ],
             "text": "Placer Group Number",
         },
-        "system": "https://emr.beda.software/ServiceReqeust",
+        "system": "https://emr.beda.software/ServiceRequest",
         "value": value,
     }
 
@@ -199,7 +200,8 @@ async def attach(app: aiohttp.web_app.Application) -> AsyncGenerator:
     await sub.save()
     app["emr"] = emr
     app["repository"] = AsyncFHIRClient(
-        REPOSITORY_BASE_URL, authorization="Basic cGxhY2VyOnBzOHFzN2tMVmJqUzVHcg=="
+        REPOSITORY_BASE_URL,
+        # authorization="Basic cGxhY2VyOnBzOHFzN2tMVmJqUzVHcg=="
     )
     yield
     await sub.delete()
