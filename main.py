@@ -25,7 +25,7 @@ def identifier(order_id):
             ],
             "text": "Placer Group Number",
         },
-        "system": "https://emr.beda.software/ServiceRequest",
+        "system": "http://diagnostic-orders-are-us.com.au/ids/pgn",
         "value": value,
     }
 
@@ -258,7 +258,9 @@ async def syncronize(request):
     else:
         external_sr_id = location.split("/")[1]
 
-    sr["identifier"] = [{"system": system, "value": external_sr_id}]
+    identifiers = sr.get('identifier', [])
+    identifiers.append({"system": system, "value": external_sr_id})
+    sr["identifier"] = identifiers
     await sr.save(fields=["identifier"])
 
     return web.Response()
