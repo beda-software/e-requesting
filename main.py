@@ -9,12 +9,13 @@ practitioner_role = "acupuncturist-macnab-adam"
 import logging
 
 # REPOSITORY_BASE_URL = "https://fhir.hl7.org.au/ereq/fhir/DEFAULT"
-REPOSITORY_BASE_URL = "https://pyroserver.azurewebsites.net/pyro"
+# REPOSITORY_BASE_URL = "https://pyroserver.azurewebsites.net/pyro"
+REPOSITORY_BASE_URL = "https://erequesting.aidbox.beda.software/fhir"
 EMR_BASE_URL = "http://localhost:8080/fhir"
 
 
 def identifier(order_id):
-    value = "BEDA1212-%06d" % (order_id)
+    value = "BEDA0325-%06d" % (order_id)
     return {
         "type": {
             "coding": [
@@ -88,6 +89,11 @@ async def prepare_service_request(sr, order_number):
 
     external_sr = {
         "resourceType": "ServiceRequest",
+        "meta": {
+            "profile": [
+                "http://hl7.org.au/fhir/ereq/StructureDefinition/au-erequesting-servicerequest-path"
+                ],
+        },
         "requisition": identifier(order_number),
         "id": str(sr_id),
         "contained": contained(patient_id),
@@ -111,6 +117,7 @@ async def prepare_service_request(sr, order_number):
         "subject": {"reference": f"urn:uuid:{patient_id}"},
         "encounter": {"reference": "#encounter"},
         "insurance": [{"reference": "#coverage"}],
+        "extension": [{"url": "http://hl7.org.au/fhir/ereq/StructureDefinition/au-erequesting-displaysequence", "valueInteger": 1}]
     }
     external_group_task = {
         "resourceType": "Task",
@@ -120,8 +127,8 @@ async def prepare_service_request(sr, order_number):
             ],
             "tag": [
                 {
-                    "system": "http://fhir.geniesolutions.io/CodeSystem/eorders-tag",
-                    "code": "fulfillment-task-group"
+                    "system": "http://hl7.org.au/fhir/ereq/CodeSystem/au-erequesting-task-tag",
+                    "code": "fulfilment-task-group"
                 }
             ]
         },
@@ -140,7 +147,7 @@ async def prepare_service_request(sr, order_number):
             "coding": [
                 {
                     "system": "http://hl7.org/fhir/CodeSystem/task-code",
-                    "code": "fulfill",
+                    "code": "fulfil",
                 }
             ]
         },
@@ -164,8 +171,8 @@ async def prepare_service_request(sr, order_number):
             ],
             "tag": [
                 {
-                    "system": "http://fhir.geniesolutions.io/CodeSystem/eorders-tag",
-                    "code": "fulfillment-task"
+                    "system": "http://hl7.org.au/fhir/ereq/CodeSystem/au-erequesting-task-tag",
+                    "code": "fulfilment-task"
                 }
             ]
         },
@@ -184,7 +191,7 @@ async def prepare_service_request(sr, order_number):
             "coding": [
                 {
                     "system": "http://hl7.org/fhir/CodeSystem/task-code",
-                    "code": "fulfill",
+                    "code": "fulfil",
                 }
             ]
         },
@@ -199,6 +206,8 @@ async def prepare_service_request(sr, order_number):
         "requester": {"reference": "http://pyroserver.azurewebsites.net/pyro/PractitionerRole/00040000-ac10-0242-ebbf-08dd1a46f4d5"},
     }
 
+    del patient_data['id']
+    del encounter_data['id']
     return {
         "resourceType": "Bundle",
         "type": "transaction",
@@ -248,6 +257,8 @@ async def syncronize(request):
     bundle = repository.resource(
         "Bundle", **(await prepare_service_request(sr, order_number))
     )
+    # import json
+    # print(json.dumps(bundle.serialize(), indent=2))
     await bundle.save()
 
     print(bundle.serialize())
