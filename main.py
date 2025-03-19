@@ -5,11 +5,6 @@ import aiohttp
 from aiohttp import web
 from fhirpy import AsyncFHIRClient
 
-practitioner_role = "acupuncturist-macnab-adam"
-import logging
-
-# REPOSITORY_BASE_URL = "https://fhir.hl7.org.au/ereq/fhir/DEFAULT"
-# REPOSITORY_BASE_URL = "https://pyroserver.azurewebsites.net/pyro"
 REPOSITORY_BASE_URL = "https://erequesting.aidbox.beda.software/fhir"
 EMR_BASE_URL = "http://localhost:8080/fhir"
 
@@ -66,6 +61,18 @@ def contained(patient_id):
 
 
 async def prepare_service_request(sr, order_number):
+    organization = await sr["performer"][0].to_resource()
+    remote_org_id = organization["identifier"][0]["value"]
+    remote_organization = {
+        "reference": f"Organization/{remote_org_id}",
+    }
+
+    requester = await sr["requester"].to_resource()
+    remote_requester_id = requester["identifier"][0]["value"]
+    remote_requester = {
+        "reference": f"PractitionerRole/{remote_requester_id}",
+    }
+
     patient = await sr["subject"].to_resource()
     patient_data = patient.serialize()
     del patient_data["meta"]
@@ -80,7 +87,7 @@ async def prepare_service_request(sr, order_number):
         "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
         "code": "AMB",
     }
-    encounter_data['subject'] = {"reference": f"urn:uuid:{patient_id}"}
+    encounter_data["subject"] = {"reference": f"urn:uuid:{patient_id}"}
 
     sr_id = uuid4()
     group_task_id = uuid4()
@@ -91,33 +98,32 @@ async def prepare_service_request(sr, order_number):
         "resourceType": "ServiceRequest",
         "meta": {
             "profile": [
-                "http://hl7.org.au/fhir/ereq/StructureDefinition/au-erequesting-servicerequest-path"
-                ],
+                (
+                    "http://hl7.org.au/fhir/ereq/StructureDefinition/au-erequesting-servicerequest-path"
+                    if sr["category"][0]["coding"][0]["code"] == "108252007"
+                    else "http://hl7.org.au/fhir/ereq/StructureDefinition/au-erequesting-servicerequest-imag"
+                )
+            ],
         },
         "requisition": identifier(order_number),
         "id": str(sr_id),
         "contained": contained(patient_id),
         "authoredOn": "2024-12-12T10:00:00+10:00",
-        "category": [
-            {
-                "coding": [
-                    {
-                        "code": "108252007",
-                        "display": "Laboratory procedure",
-                        "system": "http://snomed.info/sct",
-                    }
-                ]
-            }
-        ],
+        "category": sr["category"],
         "code": sr["code"],
         "priority": sr["priority"],
-        "requester": {"reference": "http://pyroserver.azurewebsites.net/pyro/PractitionerRole/00040000-ac10-0242-ebbf-08dd1a46f4d5"},
+        "requester": remote_requester,
         "status": "active",
         "intent": sr["intent"],
         "subject": {"reference": f"urn:uuid:{patient_id}"},
         "encounter": {"reference": "#encounter"},
         "insurance": [{"reference": "#coverage"}],
-        "extension": [{"url": "http://hl7.org.au/fhir/ereq/StructureDefinition/au-erequesting-displaysequence", "valueInteger": 1}]
+        "extension": [
+            {
+                "url": "http://hl7.org.au/fhir/ereq/StructureDefinition/au-erequesting-displaysequence",
+                "valueInteger": 1,
+            }
+        ],
     }
     external_group_task = {
         "resourceType": "Task",
@@ -128,9 +134,9 @@ async def prepare_service_request(sr, order_number):
             "tag": [
                 {
                     "system": "http://hl7.org.au/fhir/ereq/CodeSystem/au-erequesting-task-tag",
-                    "code": "fulfilment-task-group"
+                    "code": "fulfilment-task-group",
                 }
-            ]
+            ],
         },
         "groupIdentifier": identifier(order_number),
         "status": "requested",
@@ -138,7 +144,7 @@ async def prepare_service_request(sr, order_number):
             "coding": [
                 {
                     "system": "http://sonichealthcare.com.au/CodeSystem/pathology-order-status",
-                    "code": "active"
+                    "code": "active",
                 }
             ]
         },
@@ -153,15 +159,11 @@ async def prepare_service_request(sr, order_number):
         },
         "intent": "order",
         "focus": {"reference": f"urn:uuid:{str(sr_id)}"},
-        # "owner": sr["performer"][0],
-        "owner": {
-            "reference": "http://pyroserver.azurewebsites.net/pyro/Organization/00040000-ac10-0242-bfe0-08dd1a32990a",
-        },
-        "authoredOn": "2024-03-21T10:00:00+10:00",
+        "owner": remote_organization,
+        "authoredOn": "2025-03-19T10:00:00+10:00",
         "for": {"reference": f"urn:uuid:{patient_data['id']}"},
-        "requester": {"reference": "http://pyroserver.azurewebsites.net/pyro/PractitionerRole/00040000-ac10-0242-ebbf-08dd1a46f4d5"},
+        "requester": remote_requester,
     }
-
 
     external_task = {
         "resourceType": "Task",
@@ -172,9 +174,9 @@ async def prepare_service_request(sr, order_number):
             "tag": [
                 {
                     "system": "http://hl7.org.au/fhir/ereq/CodeSystem/au-erequesting-task-tag",
-                    "code": "fulfilment-task"
+                    "code": "fulfilment-task",
                 }
-            ]
+            ],
         },
         "groupIdentifier": identifier(order_number),
         "status": "requested",
@@ -182,7 +184,7 @@ async def prepare_service_request(sr, order_number):
             "coding": [
                 {
                     "system": "http://sonichealthcare.com.au/CodeSystem/pathology-order-status",
-                    "code": "active"
+                    "code": "active",
                 }
             ]
         },
@@ -197,17 +199,14 @@ async def prepare_service_request(sr, order_number):
         },
         "intent": "order",
         "focus": {"reference": f"urn:uuid:{str(sr_id)}"},
-        # "owner": sr["performer"][0],
-        "owner": {
-            "reference": "http://pyroserver.azurewebsites.net/pyro/Organization/00040000-ac10-0242-bfe0-08dd1a32990a",
-        },
+        "owner": remote_organization,
         "authoredOn": "2024-03-21T10:00:00+10:00",
         "for": {"reference": f"urn:uuid:{patient_data['id']}"},
-        "requester": {"reference": "http://pyroserver.azurewebsites.net/pyro/PractitionerRole/00040000-ac10-0242-ebbf-08dd1a46f4d5"},
+        "requester": remote_requester,
     }
 
-    del patient_data['id']
-    del encounter_data['id']
+    del patient_data["id"]
+    del encounter_data["id"]
     return {
         "resourceType": "Bundle",
         "type": "transaction",
@@ -232,7 +231,7 @@ async def prepare_service_request(sr, order_number):
                 "resource": external_task,
                 "fullUrl": f"urn:uuid:{str(task_id)}",
             },
-           {
+            {
                 "request": {"url": "Encounter", "method": "POST"},
                 "resource": encounter_data,
                 "fullUrl": f"urn:uuid:{str(encounter_id)}",
@@ -269,7 +268,7 @@ async def syncronize(request):
     else:
         external_sr_id = location.split("/")[1]
 
-    identifiers = sr.get('identifier', [])
+    identifiers = sr.get("identifier", [])
     identifiers.append({"system": system, "value": external_sr_id})
     sr["identifier"] = identifiers
     await sr.save(fields=["identifier"])
