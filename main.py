@@ -60,6 +60,14 @@ def contained(patient_id):
     ]
 
 
+def clean_meta(data):
+    profile = data.get("meta", {}).get("profile")
+    del data["meta"]
+    if profile:
+        data["meta"] = {"profile": profile}
+    return data
+
+
 async def prepare_service_request(sr, order_number):
     organization = await sr["performer"][0].to_resource()
     remote_org_id = organization["identifier"][0]["value"]
@@ -75,12 +83,16 @@ async def prepare_service_request(sr, order_number):
 
     patient = await sr["subject"].to_resource()
     patient_data = patient.serialize()
-    del patient_data["meta"]
+    clean_meta(patient_data)
     patient_id = patient_data["id"]
+    del patient_data["id"]
 
     encounter = await sr["encounter"].to_resource()
     encounter_data = encounter.serialize()
-    del encounter_data["meta"]
+    encounter_id = encounter_data["id"]
+
+    clean_meta(encounter_data)
+    del encounter_data["id"]
     del encounter_data["participant"]
     del encounter_data["class"]
     encounter_data["class"] = {
@@ -92,7 +104,6 @@ async def prepare_service_request(sr, order_number):
     sr_id = uuid4()
     group_task_id = uuid4()
     task_id = uuid4()
-    encounter_id = encounter_data["id"]
 
     external_sr = {
         "resourceType": "ServiceRequest",
@@ -153,7 +164,7 @@ async def prepare_service_request(sr, order_number):
             "coding": [
                 {
                     "system": "http://hl7.org/fhir/CodeSystem/task-code",
-                    "code": "fulfil",
+                    "code": "fulfill",
                 }
             ]
         },
@@ -161,7 +172,7 @@ async def prepare_service_request(sr, order_number):
         "focus": {"reference": f"urn:uuid:{str(sr_id)}"},
         "owner": remote_organization,
         "authoredOn": "2025-03-19T10:00:00+10:00",
-        "for": {"reference": f"urn:uuid:{patient_data['id']}"},
+        "for": {"reference": f"urn:uuid:{patient_id}"},
         "requester": remote_requester,
     }
 
@@ -193,7 +204,7 @@ async def prepare_service_request(sr, order_number):
             "coding": [
                 {
                     "system": "http://hl7.org/fhir/CodeSystem/task-code",
-                    "code": "fulfil",
+                    "code": "fulfill",
                 }
             ]
         },
@@ -201,12 +212,10 @@ async def prepare_service_request(sr, order_number):
         "focus": {"reference": f"urn:uuid:{str(sr_id)}"},
         "owner": remote_organization,
         "authoredOn": "2024-03-21T10:00:00+10:00",
-        "for": {"reference": f"urn:uuid:{patient_data['id']}"},
+        "for": {"reference": f"urn:uuid:{patient_id}"},
         "requester": remote_requester,
     }
 
-    del patient_data["id"]
-    del encounter_data["id"]
     return {
         "resourceType": "Bundle",
         "type": "transaction",
